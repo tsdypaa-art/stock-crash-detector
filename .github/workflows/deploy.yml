@@ -31,5 +31,5 @@ jobs:
     - name: Deploy to AWS Lambda
       run: |
         aws lambda update-function-code \
-          --function-name stock-crash-monitor　\
+          --function-name stock-crash-monitor \
           --zip-file fileb://function.zip
