@@ -1,0 +1,35 @@
+name: Deploy to AWS Lambda
+
+# 🚀 トリガー：mainブランチにコードが保存（Push）されたら自動起動
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. GitHub上にあるあなたの最新コードをロボットの作業エリアに持ってくる
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 2. 先ほど「秘密の金庫（Secrets）」に隠した鍵を使って、AWSにログインする
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-northeast-1 # 東京リージョン
+
+    # 3. コード（lambda_function.py）をZIPファイルに固める
+    - name: Zip function code
+      run: zip -r function.zip lambda_function.py
+
+    # 4. AWS Lambdaのコードを最新のZIPファイルで上書き書き換えする
+    - name: Deploy to AWS Lambda
+      run: |
+        aws lambda update-function-code \
+          --function-name stock-crash-monitor　\
+          --zip-file fileb://function.zip
