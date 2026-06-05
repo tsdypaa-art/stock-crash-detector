@@ -27,6 +27,6 @@ jobs:
     - name: Zip function code
       run: zip -r function.zip lambda_function.py
 
-    # 4. AWS Lambdaのコードを最新のZIPファイルで上書き書き換えする
+    # 4. AWS Lambdaのコードを最新のZIPファイルで上書き書き換え
     - name: Deploy to AWS Lambda
       run: aws lambda update-function-code --function-name stock-crash-monitor --zip-file fileb://function.zip
