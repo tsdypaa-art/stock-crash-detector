@@ -2,7 +2,7 @@ import os
 import urllib.request
 import json
 import boto3
-
+from boto3.dynamodb.conditions import Key # 一覧検索（Query）に使う部品を追加
 # 東京リージョンのDynamoDBに接続する準備
 dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
 table = dynamodb.Table('StockTable')
@@ -67,6 +67,23 @@ def lambda_handler(event, context):
                     }
                 )
                 reply_text = f"🗑️ 削除完了しました！\n銘柄: {symbol}\nこの銘柄の自動監視を停止しました。"
+
+            elif len(words) == 1 and words[0] == '一覧':
+                # DynamoDBから自分のUserIDのデータをまとめて取得する（Query）
+                response = table.query(
+                    KeyConditionExpression=Key('UserID').eq(user_id)
+                )
+                items = response.get('Items', [])
+                
+                if not items:
+                    reply_text = "📊 監視中の銘柄は現在ありません。\n「追加 銘柄コード 会社名」で登録してください。"
+                else:
+                    # 届いたデータを1行ずつきれいに並べる
+                    lines = ["📊 現在の監視銘柄一覧:\n"]
+                    for item in items:
+                        lines.append(f"• {item['Symbol']} ({item.get('CompanyName', '不明')})")
+                    
+                    reply_text = "\n".join(lines)
                 
             else:
                 # 打ち方が間違っていた場合の案内メッセージ
