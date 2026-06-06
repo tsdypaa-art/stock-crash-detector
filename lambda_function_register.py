@@ -32,6 +32,9 @@ def lambda_handler(event, context):
             # 返信用のチケット（ReplyToken）を取得
             reply_token = line_event.get('replyToken')
             
+            # LINEのユーザーIDを取得（これをDynamoDBのUserIDにする）
+            user_id = line_event['source'].get('userId', 'unknown_user')
+            
             # 2. 文字列を分解する（スペースで区切る）
             # 「追加 7203.T トヨタ」 ➔ ['追加', '7203.T', 'トヨタ'] というリストになる
             words = user_text.split()
@@ -41,9 +44,6 @@ def lambda_handler(event, context):
                 symbol = words[1]       # 2番目の文字（7203.T）
                 company_name = words[2] # 3番目の文字（トヨタ）
                 
-                # LINEのユーザーIDを取得（これをDynamoDBのUserIDにする）
-                user_id = line_event['source'].get('userId', 'unknown_user')
-                
                 # 3. 設計したキー構造に合わせてDynamoDBに保存！
                 table.put_item(
                     Item={
@@ -52,7 +52,7 @@ def lambda_handler(event, context):
                         'CompanyName': company_name # 属性（会社名）
                     }
                 )
-            # 成功メッセージを組み立てる
+                # 成功メッセージを組み立てる
                 reply_text = f"✅ 登録完了しました！\n銘柄: {symbol}\n企業名: {company_name}\n明日から自動監視を開始します。"
             
             #「消去」
@@ -70,7 +70,7 @@ def lambda_handler(event, context):
                 
             else:
                 # 打ち方が間違っていた場合の案内メッセージ
-                reply_text = "❌ 登録に失敗しました。\n\n【登録方法】\n「追加 銘柄コード 会社名」の順にスペースを開けて入力してください。\n\n（例）\n追加 7203.T トヨタ"
+                reply_text = "❌ 操作に失敗しました。\n\n【登録方法】\n「追加 銘柄コード 会社名」の順にスペースを開けて入力してください。\n\n（例）\n追加 7203.T トヨタ\n\n【削除方法】\n「削除 銘柄コード」の順にスペースを開けて入力してください。\n\n（例）\n削除 7203.T"
                 
             # 4. 結果をLINEに返信する
             send_reply(reply_token, reply_text)
