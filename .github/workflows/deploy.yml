@@ -15,7 +15,58 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 2. 先ほど「秘密の金庫（Secrets）」に隠した鍵を使って、AWSにログインする
+    # 2. 先ほど「秘name: Deploy Multiple Lambda Functions
+
+on:
+  push:
+    branches:
+      - main  # mainブランチにコードが保存されたら自動で動く
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. GitHubのコードをロボットの中にコピーする
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 2. AWSにログインする（大文字小文字、リージョン間違いを直した最強の設定）
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-northeast-1  # 東京リージョン
+
+    # ==========================================
+    # 🚚 【関数1】株価監視用 Lambda のデプロイ
+    # ==========================================
+    - name: Zip Lambda Function 1 (Monitor)
+      run: zip -j function1.zip lambda_function.py
+
+    - name: Deploy Lambda Function 1 (Monitor)
+      run: |
+        aws lambda update-function-code \
+          --function-name stock-crash-monitor \
+          --zip-file fileb://function1.zip
+
+    # ==========================================
+    # 🚚 【関数2】銘柄登録用 Lambda のデプロイ
+    # ==========================================
+    # ① さっき作った登録用のファイルを、一度「lambda_function.py」という名前に変えてジップ化します
+    # （※Lambdaはデフォルトで「lambda_function.py」というファイル名を探すルールになっているためです）
+    - name: Zip Lambda Function 2 (Register)
+      run: |
+        cp lambda_function_register.py lambda_function.py
+        zip -j function2.zip lambda_function.py
+
+    # ② 新しく作った「stock-register-handler」の方へ送りつけます
+    - name: Deploy Lambda Function 2 (Register)
+      run: |
+        aws lambda update-function-code \
+          --function-name stock-register-handler \
+          --zip-file fileb://function2.zip密の金庫（Secrets）」に隠した鍵を使って、AWSにログインする
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
