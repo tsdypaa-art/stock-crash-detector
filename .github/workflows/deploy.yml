@@ -1,21 +1,4 @@
-name: Deploy to AWS Lambda
-
-# 🚀 トリガー：mainブランチにコードが保存（Push）されたら自動起動
-on:
-  push:
-    branches:
-      - main
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-    # 1. GitHub上にあるあなたの最新コードをロボットの作業エリアに持ってくる
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    # 2. 先ほど「秘name: Deploy Multiple Lambda Functions
+name: Deploy Multiple Lambda Functions
 
 on:
   push:
@@ -31,7 +14,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # 2. AWSにログインする（大文字小文字、リージョン間違いを直した最強の設定）
+    # 2. AWSにログインする
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -54,30 +37,13 @@ jobs:
     # ==========================================
     # 🚚 【関数2】銘柄登録用 Lambda のデプロイ
     # ==========================================
-    # ① さっき作った登録用のファイルを、一度「lambda_function.py」という名前に変えてジップ化します
-    # （※Lambdaはデフォルトで「lambda_function.py」というファイル名を探すルールになっているためです）
     - name: Zip Lambda Function 2 (Register)
       run: |
         cp lambda_function_register.py lambda_function.py
         zip -j function2.zip lambda_function.py
 
-    # ② 新しく作った「stock-register-handler」の方へ送りつけます
     - name: Deploy Lambda Function 2 (Register)
       run: |
         aws lambda update-function-code \
           --function-name stock-register-handler \
-          --zip-file fileb://function2.zip密の金庫（Secrets）」に隠した鍵を使って、AWSにログインする
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ap-northeast-1 # 東京リージョン
-
-    # 3. コード（lambda_function.py）をZIPファイルに固める
-    - name: Zip function code
-      run: zip -r function.zip lambda_function.py
-
-    # 4. AWS Lambdaのコードを最新のZIPファイルで上書き書き換え
-    - name: Deploy to AWS Lambda
-      run: aws lambda update-function-code --function-name stock-crash-monitor --zip-file fileb://function.zip
+          --zip-file fileb://function2.zip
