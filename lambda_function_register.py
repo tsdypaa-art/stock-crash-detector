@@ -49,12 +49,25 @@ def lambda_handler(event, context):
                     Item={
                         'UserID': user_id,       # パーティションキー
                         'Symbol': symbol,        # ソートキー
-                        'CompanyName': company_name # 追加の属性（会社名）
+                        'CompanyName': company_name # 属性（会社名）
                     }
                 )
-                
-                # 成功メッセージを組み立てる
+            # 成功メッセージを組み立てる
                 reply_text = f"✅ 登録完了しました！\n銘柄: {symbol}\n企業名: {company_name}\n明日から自動監視を開始します。"
+            
+            #「消去」
+            elif words[0] == '削除' and len(words) == 2:
+                symbol = words[1] # 2番目の文字（7203.T）を取得
+                
+                # DynamoDBからあなたのUserIDとSymbolが一致するデータを削除！
+                table.delete_item(
+                    Key={
+                        'UserID': user_id,
+                        'Symbol': symbol
+                    }
+                )
+                reply_text = f"🗑️ 削除完了しました！\n銘柄: {symbol}\nこの銘柄の自動監視を停止しました。"
+                
             else:
                 # 打ち方が間違っていた場合の案内メッセージ
                 reply_text = "❌ 登録に失敗しました。\n\n【登録方法】\n「追加 銘柄コード 会社名」の順にスペースを開けて入力してください。\n\n（例）\n追加 7203.T トヨタ"
