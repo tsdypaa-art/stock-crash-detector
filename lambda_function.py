@@ -1,115 +1,99 @@
 import os
 import urllib.request
 import json
-import boto3 
-
-# 東京リージョンのDynamoDBに接続する準備
-dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
-table = dynamodb.Table('StockTable')
+import boto3
+import yfinance as yf
+from datetime import datetime, timedelta
 
 def lambda_handler(event, context):
+    # 東京リージョンのDynamoDBに接続
+    dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
+    table = dynamodb.Table('StockTable')
+    
     try:
-        # 1.DynamoDBからテーブルに登録されているデータを全件スキャンして取得する
+        # DynamoDBから全データを取得
         response = table.scan()
-        # 2.取得したデータの中から、お目当ての「アイテムのリスト」を引っこ抜く（空なら空リスト）
-        stocks = response.get('Items', [])
+        items = response.get('Items', [])
         
-        # もしDynamoDBに1件もデータが登録されていなかったら、ここで処理を終了する
-        if not stocks:
-            print("DynamoDBに銘柄データが登録されていません。")
-            return "データなし"
-
-        # 3.登録されているデータの数だけ、上から1件ずつ順番にチェック（ループ処理を開始）
-        for stock in stocks:
-            # 設定したDynamoDBのキー名（UserIDとSymbol）から値をそれぞれ取得する
-            user_id = stock.get('UserID')
-            symbol = stock.get('Symbol')  # 例: "6331.T"
+        if not items:
+            print("監視対象の銘柄が登録されていません。")
+            return {'statusCode': 200, 'body': json.dumps('No stocks to monitor')}
             
-            # もしデータに銘柄コード（Symbol）が含まれていない不正なデータがあれば、スキップして次へ
-            if not symbol:
+        # ユーザーごとに通知を送るため、データを整理
+        user_notifications = {}
+        
+        for item in items:
+            user_id = item['UserID']
+            symbol = item['Symbol']
+            company_name = item.get('CompanyName', symbol)
+            
+            # 📢 変更点：リアルタイムの「今の株価」と「前日のデータ」を取得するために、
+            # 期間を「1日分（間隔1分）」と「過去の歴史」の両方から安全に取得する
+            ticker = yf.Ticker(symbol)
+            
+            # ① 今日のリアルタイムの「現在値」を取得（1分足の最新値）
+            today_data = ticker.history(period="1d", interval="1m")
+            if today_data.empty:
+                print(f"{symbol} の本日のリアルタイムデータが取得できません。市場時間外の可能性があります。")
+                continue
+            current_price = today_data['Close'].iloc[-1]
+            
+            # ② 前営業日の「終値」を取得（安全に過去の歴史から引っ張る）
+            history_data = ticker.history(period="5d")
+            if len(history_data) < 2:
+                print(f"{symbol} の過去データが不足しています。")
                 continue
             
-            # Yahoo Financeから株価データを取得するためのURL（銘柄コードを自動で当てはめる）
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+            # もし今日の日足データがすでにhistory_dataに入っている場合は、その1つ前が「前日終値」
+            # まだ入っていない（朝イチなど）場合は、一番最後のデータが「前日終値」
+            if history_data.index[-1].date() == today_data.index[-1].date():
+                prev_close = history_data['Close'].iloc[-2]
+            else:
+                prev_close = history_data['Close'].iloc[-1]
             
-            # 一般的なブラウザからのアクセスに見せかけるための設定（ブロック対策）
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            # 📢 前日比（リアルタイム現在値 vs 前日終値）の計算
+            pct_change = (current_price - prev_close) / prev_close
             
-            try:
-                # インターネット経由でYahoo Financeにデータをリクエスト
-                with urllib.request.urlopen(req) as response:
-                    # 返ってきた生データ（JSON形式）をPythonの辞書型に変換
-                    data = json.loads(response.read().decode())
-                    result = data["chart"]["result"][0]
-                    
-                    # 必要なデータ（現在値と前日の終値）をピンポイントで抽出
-                    current_price = result["meta"]["regularMarketPrice"]     
-                    previous_close = result["meta"]["previousClose"]   
-                    
-                    # 前日終値からの変動率（前日比）を計算
-                    price_change_rate = (current_price - previous_close) / previous_close
-                    
-                    # DynamoDBに「CompanyName」があればそれを使い、無ければ銘柄コードを名前にする
-                    company_name = stock.get('CompanyName', symbol)
-                    
-                    # クラウド（AWS）のログに、誰のどの銘柄の状況かを分かりやすく出力（デバッグ用）
-                    print(f"ユーザー: {user_id}, 銘柄: {company_name}, 前日終値: {previous_close}, 現在値: {current_price}, 変動率: {price_change_rate:.2%}")
-                    
-                    # 暴落と判定する基準値（-2%以下になったら通知する設定）
-                    CRASH_THRESHOLD = -0.02
-                    
-                    # 計算した変動率が、基準値（-2%）よりも低くなっているか判定
-                    if price_change_rate <= CRASH_THRESHOLD:
-                        # 基準を超えていたら、下の「LINE通知関数」を呼び出す（会社名、現在値、変動率を渡す）
-                        send_notification(company_name, current_price, price_change_rate)
-                        
-            except Exception as e:
-                # 特定の1銘柄でエラー（通信失敗など）が起きても、他の銘柄の監視を止めないために「continue」で次の銘柄へ飛ばす
-                print(f"銘柄 {symbol} のデータ取得中にエラー: {e}")
-                continue
+            # 【重要】株価が動いている時間帯に「-2%」以下になったら即検知！
+            if pct_change <= -0.02:
+                change_percent = pct_change * 100
+                message = f"🚨【リアルタイム急落アラート】\n{company_name} ({symbol})\n前日比: {change_percent:.2f}%\n★現在のリアルタイム株価: {current_price:.2f}円\n(前日終値: {prev_close:.2f}円)"
                 
-        return "全銘柄のチェックが完了しました。"
+                if user_id not in user_notifications:
+                    user_notifications[user_id] = []
+                user_notifications[user_id].append(message)
+                
+        # 集計した通知をユーザーごとに送信
+        for user_id, messages in user_notifications.items():
+            final_message = "\n\n".join(messages)
+            url = "https://api.line.me/v2/bot/message/push"
+            send_line_notification(user_id, final_message, url)
             
+        return {'statusCode': 200, 'body': json.dumps('Success')}
+        
     except Exception as e:
-        # システムの根本（DynamoDB自体に繋がらないなど）でエラーが起きた場合は、ログを残して終了
-        print(f"システム全体でエラーが発生しました: {e}")
-        raise e
+        print(f"エラー発生: {e}")
+        return {'statusCode': 500, 'body': json.dumps('Internal Server Error')}
 
-def send_notification(company_name, price, change_rate):
-    # AWSの「環境変数」という隠し金庫から、LINEのアクセストークン（鍵）を取り出す
+def send_line_notification(user_id, text, url):
     token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
     if not token:
-        print("LINEのアクセストークンが設定されていないため、送信をスキップします。")
+        print("LINEのアクセストークンが設定されていません。")
         return
-
-    # LINEに送信するメッセージの本文を組み立てる（【変更】銘柄コードだった部分を、分かりやすい「企業名」に変更！）
-    message_text = f"🚨【株価アラート】🚨\n企業: {company_name}\n現在値: ¥{price}\n前日比: {change_rate:.2%}\n基準値を超えたため通知します。"
-
-    # LINE Messaging API（公式アカウントからメッセージを全員に一斉送信する窓口）のURL
-    url = "https://api.line.me/v2/bot/message/broadcast"
-    
-    # LINEのサーバーに「私は本物の管理者です」と証明するための認証ヘッダー
+        
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}"
     }
     
-    # LINEに送りつけるデータの中身（メッセージの種類と本文）
     data = {
-        "messages": [
-            {
-                "type": "text",
-                "text": message_text
-            }
-        ]
+        "to": user_id,
+        "messages": [{"type": "text", "text": text}]
     }
     
-    # データを機械が読める形式（JSON/UTF-8）にエンコードして、POSTメソッドでLINEに送信リクエスト
     req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req) as res:
-            # LINE側が正常に受け取ったらログに出力
-            print(f"LINE通知が正常に送信されました。")
+            print(f"ユーザー {user_id} へのLINE通知に成功しました。")
     except Exception as e:
-        # LINEへの送信中にエラーが起きた場合のログ出力
-        print(f"LINE通知の送信中にエラーが発生しました: {e}")した: {e}")
+        print(f"LINE通知エラー: {e}")
