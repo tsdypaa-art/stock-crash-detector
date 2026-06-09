@@ -25,25 +25,36 @@ jobs:
     # ==========================================
     # 🚚 【関数1】株価監視用 Lambda のデプロイ
     # ==========================================
-    - name: Zip Lambda Function 1 (Monitor)
-      run: zip -j function1.zip lambda_function.py
-
     - name: Deploy Lambda Function 1 (Monitor)
       run: |
+        # ① 新しい空のフォルダを作って、そこにyfinanceとコードを隔離してインストールする
+        mkdir monitor_dir
+        cp lambda_function.py monitor_dir/
+        cd monitor_dir
+        pip install -t . yfinance requests
+        
+        # ② 全部まとめてzipにする
+        zip -r ../monitor_deploy.zip .
+        cd ..
+        
+        # ③ AWSへアップロード
         aws lambda update-function-code \
           --function-name stock-crash-monitor \
-          --zip-file fileb://function1.zip
+          --zip-file fileb://monitor_deploy.zip
 
     # ==========================================
     # 🚚 【関数2】銘柄登録用 Lambda のデプロイ
     # ==========================================
-    - name: Zip Lambda Function 2 (Register)
-      run: |
-        cp lambda_function_register.py lambda_function.py
-        zip -j function2.zip lambda_function.py
-
     - name: Deploy Lambda Function 2 (Register)
       run: |
+        # ① 登録用コードだけをスッキリzipにする（yfinanceは混ぜない）
+        mkdir register_dir
+        cp lambda_function_register.py register_dir/lambda_function.py
+        cd register_dir
+        zip -r ../register_deploy.zip .
+        cd ..
+        
+        # ② AWSへアップロード
         aws lambda update-function-code \
           --function-name stock-register-handler \
-          --zip-file fileb://function2.zip
+          --zip-file fileb://register_deploy.zip
