@@ -2,8 +2,44 @@ import os
 import urllib.request
 import json
 import boto3
-import yfinance as yf
 from datetime import datetime, timedelta
+
+def get_stock_data_native(symbol):
+    """
+    Yahoo FinanceのAPIから、yfinanceを使わずに直接データを取得する関数。
+    ライブラリを一切使わないため、容量は数キロバイトで動作。
+    """
+    # 1分足(1m)で1日分(1d)のデータを取得
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    
+    try:
+        with urllib.request.urlopen(req) as response:
+            data = json.loads(response.read().decode())
+            
+            # APIのレスポンス構造を解析
+            result = data['chart']['result'][0]
+            indicators = result['indicators']['quote'][0]
+            meta = result['meta']
+            
+            # ① 現在値（最新の1分足のClose）を取得
+            closes = indicators['close']
+            if not closes:
+                return None, None
+                
+            current_price = closes[-1]
+            # 最新の足がNoneの場合は、1つ前の足を見る（市場直後などの対策）
+            if current_price is None and len(closes) > 1:
+                current_price = closes[-2]
+                
+            # ② 前日終値を取得
+            prev_close = meta.get('previousClose')
+            
+            return current_price, prev_close
+            
+    except Exception as e:
+        print(f"{symbol} のデータ取得中にエラーが発生しました: {e}")
+        return None, None
 
 def lambda_handler(event, context):
     # 東京リージョンのDynamoDBに接続
@@ -27,29 +63,12 @@ def lambda_handler(event, context):
             symbol = item['Symbol']
             company_name = item.get('CompanyName', symbol)
             
-            # 📢 変更点：リアルタイムの「今の株価」と「前日のデータ」を取得するために、
-            # 期間を「1日分（間隔1分）」と「過去の歴史」の両方から安全に取得する
-            ticker = yf.Ticker(symbol)
+            # 📢 魔法の軽量関数で「現在値」と「前日終値」を一撃で取得
+            current_price, prev_close = get_stock_data_native(symbol)
             
-            # ① 今日のリアルタイムの「現在値」を取得（1分足の最新値）
-            today_data = ticker.history(period="1d", interval="1m")
-            if today_data.empty:
-                print(f"{symbol} の本日のリアルタイムデータが取得できません。市場時間外の可能性があります。")
+            if current_price is None or prev_close is None:
+                print(f"{symbol} のリアルタイムデータまたは前日終値が取得できませんでした。")
                 continue
-            current_price = today_data['Close'].iloc[-1]
-            
-            # ② 前営業日の「終値」を取得（安全に過去の歴史から引っ張る）
-            history_data = ticker.history(period="5d")
-            if len(history_data) < 2:
-                print(f"{symbol} の過去データが不足しています。")
-                continue
-            
-            # もし今日の日足データがすでにhistory_dataに入っている場合は、その1つ前が「前日終値」
-            # まだ入っていない（朝イチなど）場合は、一番最後のデータが「前日終値」
-            if history_data.index[-1].date() == today_data.index[-1].date():
-                prev_close = history_data['Close'].iloc[-2]
-            else:
-                prev_close = history_data['Close'].iloc[-1]
             
             # 📢 前日比（リアルタイム現在値 vs 前日終値）の計算
             pct_change = (current_price - prev_close) / prev_close
