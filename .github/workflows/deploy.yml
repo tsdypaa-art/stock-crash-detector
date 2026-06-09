@@ -3,58 +3,39 @@ name: Deploy Multiple Lambda Functions
 on:
   push:
     branches:
-      - main  # mainブランチにコードが保存されたら自動で動く
+      - main
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. GitHubのコードをロボットの中にコピーする
     - name: Checkout code
       uses: actions/checkout@v3
 
-    # 2. AWSにログインする
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ap-northeast-1  # 東京リージョン
+        aws-region: ap-northeast-1
 
-    # ==========================================
-    # 🚚 【関数1】株価監視用 Lambda のデプロイ
-    # ==========================================
+    # 🚚 【関数1】株価監視用 Lambda のデプロイ（超軽量化）
     - name: Deploy Lambda Function 1 (Monitor)
       run: |
-        # ① 新しい空のフォルダを作って、そこにyfinanceとコードを隔離してインストールする
-        mkdir monitor_dir
-        cp lambda_function.py monitor_dir/
-        cd monitor_dir
-        pip install -t . yfinance requests
-        
-        # ② 全部まとめてzipにする
-        zip -r ../monitor_deploy.zip .
-        cd ..
-        
-        # ③ AWSへアップロード
+        zip -j monitor_deploy.zip lambda_function.py
         aws lambda update-function-code \
           --function-name stock-crash-monitor \
           --zip-file fileb://monitor_deploy.zip
 
-    # ==========================================
     # 🚚 【関数2】銘柄登録用 Lambda のデプロイ
-    # ==========================================
     - name: Deploy Lambda Function 2 (Register)
       run: |
-        # ① 登録用コードだけをスッキリzipにする（yfinanceは混ぜない）
         mkdir register_dir
         cp lambda_function_register.py register_dir/lambda_function.py
         cd register_dir
         zip -r ../register_deploy.zip .
         cd ..
-        
-        # ② AWSへアップロード
         aws lambda update-function-code \
           --function-name stock-register-handler \
           --zip-file fileb://register_deploy.zip
